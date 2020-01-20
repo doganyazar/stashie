@@ -2,6 +2,7 @@ import LRU from 'lru-cache';
 import {mkdir, del, writeFile} from './file';
 import filenamify from'filenamify';
 import path from 'path';
+import fs from 'fs';
 
 export default class Cache {
   path: string;
@@ -18,22 +19,40 @@ export default class Cache {
     await mkdir(this.path);
   }
 
-  async set(key: string, body: string) {
-    const size = body.length;
-    const meta = {size};
-    const filePrefix = path.join(this.path, filenamify(key));
+  private filePrefixFromKey(key: string) {
+    return path.join(this.path, filenamify(key));
+  }
 
-    console.log(`${filePrefix}.meta`);
-
+  async set(key: string, inputStream: NodeJS.ReadableStream, size = 0) {
+    const filePrefix = this.filePrefixFromKey(key);
+    const detectSize = !size;
+        
     const metaFilePath = `${filePrefix}.meta`;
     const dataFilePath = `${filePrefix}.data`;
+    const outputStream = fs.createWriteStream(dataFilePath);
+    
+    inputStream.pipe(outputStream);
+    inputStream.on('data', (chunk) => {
+      if (detectSize) {
+        size += chunk.length;
+      }
+    });
+    await new Promise((resolve, reject) => {
+      inputStream.on('error', reject);
+      inputStream.on('end', resolve);
+    });
+    
+    const meta = {size};
     await writeFile(metaFilePath, JSON.stringify(meta));
-    await writeFile(dataFilePath, body);
+    
     this.memCache.set(key, {size});
   }
 
-  get(key: string) {
-    return this.memCache.get(key);
+  get(key: string): NodeJS.ReadableStream | null {
+    const cachedItem = this.memCache.get(key);
+    if (!cachedItem) return null;
+
+    return fs.createReadStream(`${this.filePrefixFromKey(key)}.data`);
   }
 
   async destroy() {
