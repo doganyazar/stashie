@@ -1,22 +1,29 @@
 import LRU from 'lru-cache';
-import {mkdir, del, writeFile} from './file';
+import {mkdir, del, writeFile, readFile} from './file';
 import filenamify from'filenamify';
 import path from 'path';
 import fs from 'fs';
 import stream from 'stream';
+import globby from 'globby';
 
 export interface CacheOpts {
   path: string;
   maxSize: number; // in MB 
+  scanFolder: boolean; // scans the provided cache folder for persisted cache items during initialization
 }
 
-interface CacheItem {
+interface CacheMemItem {
   size: number;
+}
+
+interface MetaContent extends CacheMemItem {
+  key: string;
+  data?: Record<string, any>;
 }
 
 export default class Cache {
   private opts: CacheOpts
-  private memCache: LRU<string, CacheItem>;
+  private memCache: LRU<string, CacheMemItem>;
 
   constructor(opts: CacheOpts) {
     this.opts = opts;
@@ -30,8 +37,31 @@ export default class Cache {
     });
   }
 
+  resolvePath(relativePath: string) {
+    return path.resolve(this.opts.path, relativePath);
+  }
+
   async init() {
     await mkdir(this.opts.path);
+    const prevItems = await globby(['*.meta', '*.data'], {cwd: this.opts.path, deep: 1});
+    
+    const metaFiles = prevItems.filter(f => f.endsWith('.meta'));
+    const dataFiles = prevItems.filter(f => f.endsWith('.data'));
+
+    for (const metaFile of metaFiles) {
+      const prefix = metaFile.replace(/.meta$/, '');
+      if (dataFiles.includes(`${prefix}.data`)) {
+        try {
+          const metaData: MetaContent = JSON.parse(await readFile(this.resolvePath(metaFile)));
+          this.memCache.set(metaData.key, {size: metaData.size});
+        } catch (err) {
+          console.error('Err parsing metadata', err);
+        }
+      } else {
+        console.log('Ignoring alone meta file', metaFile);
+      }
+
+    }
   }
 
   private async deletePersistedItem(key: string) {
@@ -105,16 +135,30 @@ export default class Cache {
     
     if (!streamFailed) {
       console.log('input stream successfully ended');
-      const item: CacheItem = {size};
-      await writeFile(metaFilePath, JSON.stringify(item));
-      await this.memCache.set(key, item);
+      const meta: MetaContent = {size, key};
+      const item: CacheMemItem = {size};
+      await writeFile(metaFilePath, JSON.stringify(meta));
+      this.memCache.set(key, item);
     }
+  }
+
+  // This is just for testing
+  _getMemItem(key: string): CacheMemItem {
+    return this.memCache.get(key);
   }
 
   get(key: string): NodeJS.ReadableStream | undefined {
     const cachedItem = this.memCache.get(key);
     if (!cachedItem) return;
     return fs.createReadStream(`${this.filePrefixFromKey(key)}.data`);
+  }
+
+  has(key: string) {
+    return this.memCache.has(key);
+  }
+
+  keys() {
+    return this.memCache.keys();
   }
 
   async destroy() {

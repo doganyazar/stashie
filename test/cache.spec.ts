@@ -1,5 +1,5 @@
 import Cache from '../src/cache';
-import {equal, deepEqual, } from 'assert';
+import {equal, deepEqual, notEqual} from 'assert';
 import {del, isFileWritable, doesFileExist, readFile} from '../src/file'; // TODO: add src folder to tsconfig path
 import { Readable, PassThrough } from 'stream';
 import { genRandomText } from './utils';
@@ -16,14 +16,17 @@ let cache: Cache;
 const cachePath = './tmp/.cache';
 const maxSize = 2.1 / 1024; //2.1 KB
 
-async function checkItemIsCached(key: string, body: string) {
+async function checkItemIsCached(key: string, body: string, targetCache = cache) {
   const filePrefix = cachePath + '/' + key;
   const persistedMetaObj = JSON.parse(await readFile(`${filePrefix}.meta`));
   const persistedBody = await readFile(`${filePrefix}.data`);
 
-  deepEqual(persistedMetaObj, {size: body.length});
+  const size = body.length;
+  deepEqual(persistedMetaObj, {key, size});
   equal(persistedBody, body);
-  deepEqual(await stream2String(cache.get(key)), persistedBody);
+  notEqual(targetCache.get(key), undefined);
+  deepEqual(targetCache._getMemItem(key), {size});
+  deepEqual(await stream2String(targetCache.get(key)), persistedBody);
 }
 
 async function checkItemIsNotCached(key: string) {
@@ -38,7 +41,8 @@ describe('Cache', () => {
     del.sync(cachePath);
     cache = new Cache({
       path: cachePath,
-      maxSize
+      maxSize,
+      scanFolder: true
     });
     await cache.init();
   });
@@ -88,6 +92,28 @@ describe('Cache', () => {
     await checkItemIsNotCached('text1');
   });
 
+  it('Cache should recover persisted items', async () => {
+    const resource1 = genRandomText(1024); // 1 KB each
+    const resource2 = genRandomText(1024);
+
+    await cache.set('resource1', Readable.from([resource1]));
+    await cache.set('resource2', Readable.from([resource2]));
+
+    const newCache = new Cache({
+      path: cachePath,
+      maxSize,
+      scanFolder: true
+    });
+    await newCache.init();
+
+    await checkItemIsCached('resource1', resource1, newCache);
+    await checkItemIsCached('resource2', resource2, newCache);
+    equal(newCache.keys().length, 2);
+
+  });
+
+  //meta files should save custom data, i.e. http headers
+  //test for scanFolder to see it ignores alone .meta files or .data files with wrong hash
   //read cache folder and regenerate mem cache
   //try with binary data. Need objectMode? 
 
