@@ -99,22 +99,34 @@ describe('Cache', () => {
     await cache.set('resource1', Readable.from([resource1]));
     await cache.set('resource2', Readable.from([resource2]));
 
-    const newCache = new Cache({
-      path: cachePath,
-      maxSize,
-      scanFolder: true
-    });
-    await newCache.init();
+    {
+      const cacheScanFolder = new Cache({
+        path: cachePath,
+        maxSize,
+        scanFolder: true
+      });
+      await cacheScanFolder.init();
+  
+      await checkItemIsCached('resource1', resource1, cacheScanFolder);
+      await checkItemIsCached('resource2', resource2, cacheScanFolder);
+      equal(cacheScanFolder.keys().length, 2);
+    }
 
-    await checkItemIsCached('resource1', resource1, newCache);
-    await checkItemIsCached('resource2', resource2, newCache);
-    equal(newCache.keys().length, 2);
-
+    {
+      const cacheIgnoreScan = new Cache({
+        path: cachePath,
+        maxSize,
+        scanFolder: false
+      });
+      await cacheIgnoreScan.init();
+      equal(cacheIgnoreScan.keys().length, 0);
+    }
   });
 
   //meta files should save custom data, i.e. http headers
   //test for scanFolder to see it ignores alone .meta files or .data files with wrong hash
   //read cache folder and regenerate mem cache
   //try with binary data. Need objectMode? 
+  //cache shall not crash if folder cannot be created.
 
 });

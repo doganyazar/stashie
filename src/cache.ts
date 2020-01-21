@@ -24,6 +24,7 @@ interface MetaContent extends CacheMemItem {
 export default class Cache {
   private opts: CacheOpts
   private memCache: LRU<string, CacheMemItem>;
+  private initialized = false;
 
   constructor(opts: CacheOpts) {
     this.opts = opts;
@@ -41,10 +42,12 @@ export default class Cache {
     return path.resolve(this.opts.path, relativePath);
   }
 
-  async init() {
-    await mkdir(this.opts.path);
-    const prevItems = await globby(['*.meta', '*.data'], {cwd: this.opts.path, deep: 1});
-    
+  async scanFolder() {
+    const prevItems = await globby(['*.meta', '*.data'], {cwd: this.opts.path, deep: 1}).catch(err => {
+      console.error('Scanning folder failed', err);
+      return [];
+    });
+
     const metaFiles = prevItems.filter(f => f.endsWith('.meta'));
     const dataFiles = prevItems.filter(f => f.endsWith('.data'));
 
@@ -60,8 +63,19 @@ export default class Cache {
       } else {
         console.log('Ignoring alone meta file', metaFile);
       }
-
     }
+  }
+
+  async init() {
+    try {
+      await mkdir(this.opts.path);
+      if (this.opts.scanFolder) {
+        await this.scanFolder();
+      }
+      this.initialized = true;
+    } catch (err) {
+      console.error('Initialization failed', err);
+    };
   }
 
   private async deletePersistedItem(key: string) {
@@ -89,6 +103,8 @@ export default class Cache {
   }
 
   async set(key: string, inputStream: NodeJS.ReadableStream, size = 0) {
+    if (!this.initialized) return;
+
     const filePrefix = this.filePrefixFromKey(key);
     const detectSize = !size;
         
