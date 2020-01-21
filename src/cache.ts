@@ -89,8 +89,11 @@ export default class Cache {
   }
 
   get(key: string): NodeJS.ReadableStream | undefined {
+    console.log('Asking', key);
     const cachedItem = this.memCache.get(key);
+    console.log('XXXX', cachedItem);
     if (!cachedItem) return;
+
 
     return fs.createReadStream(`${this.filePrefixFromKey(key)}.data`);
   }
