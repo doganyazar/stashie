@@ -5,23 +5,47 @@ import path from 'path';
 import fs from 'fs';
 import stream from 'stream';
 
-export default class Cache {
+export interface CacheOpts {
   path: string;
-  private memCache = new LRU({
-    max: 500,
-    maxAge: 1000 * 60 * 60 
-  })
+  maxSize: number; // in MB 
+}
 
-  constructor(path: string) {
-    this.path = path;
+interface CacheItem {
+  size: number;
+}
+
+export default class Cache {
+  private opts: CacheOpts
+  private memCache: LRU<string, CacheItem>;
+
+  constructor(opts: CacheOpts) {
+    this.opts = opts;
+    this.itemDropped = this.itemDropped.bind(this);
+
+    this.memCache = new LRU({
+      max: opts.maxSize * 1024 * 1024,
+      maxAge: 1000 * 60 * 60, 
+      length: (item) => item.size,
+      dispose: (key) => this.itemDropped(key)
+    });
   }
 
   async init() {
-    await mkdir(this.path);
+    await mkdir(this.opts.path);
+  }
+
+  private async deletePersistedItem(key: string) {
+    const filePrefix = this.filePrefixFromKey(key);
+    await del([`${filePrefix}.meta`, `${filePrefix}.data`]);
+  }
+
+  private itemDropped(key: string) {
+    console.log('Item dropped', key);
+    return this.deletePersistedItem(key);
   }
 
   private filePrefixFromKey(key: string) {
-    return path.join(this.path, filenamify(key));
+    return path.join(this.opts.path, filenamify(key));
   }
 
   private waitForStreamEnd(streamObject: NodeJS.ReadableStream | NodeJS.WritableStream) {
@@ -81,25 +105,20 @@ export default class Cache {
     
     if (!streamFailed) {
       console.log('input stream successfully ended');
-
-      const meta = {size};
-      await writeFile(metaFilePath, JSON.stringify(meta));
-      await this.memCache.set(key, {size});
+      const item: CacheItem = {size};
+      await writeFile(metaFilePath, JSON.stringify(item));
+      await this.memCache.set(key, item);
     }
   }
 
   get(key: string): NodeJS.ReadableStream | undefined {
-    console.log('Asking', key);
     const cachedItem = this.memCache.get(key);
-    console.log('XXXX', cachedItem);
     if (!cachedItem) return;
-
-
     return fs.createReadStream(`${this.filePrefixFromKey(key)}.data`);
   }
 
   async destroy() {
-    return del(this.path);
+    return del(this.opts.path);
   }
 }
 
